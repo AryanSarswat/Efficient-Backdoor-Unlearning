@@ -1,12 +1,11 @@
 jupyter
-numpy>=1.22.4,<1.24
+numpy
 pandas
-pillow~=8.2.0
+pillow
 torch
 torchvision
-tqdm>=4.66.3
+tqdm
 transformers
-# SciencePlots
 scikit-learn
 scipy
 seaborn

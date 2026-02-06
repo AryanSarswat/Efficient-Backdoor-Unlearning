@@ -1,107 +1,172 @@
-# LM-Unlearning
-Machine unlearning of Language Models. Uses implementation of [SPECTRE: Defending Against Backdoor Attacks Using Robust Covariance Estimation](https://arxiv.org/abs/2104.11315).
+# Efficient Backdoor Unlearning
 
-## Installation
+A machine unlearning framework for detecting and removing backdoor attacks from language models using robust statistical methods.
 
-**Prerequisites**
+## Overview
 
-* Python 3.9
-* Julia 1.11
+Backdoor attacks pose a significant threat to machine learning systems by injecting malicious triggers during training that cause models to misclassify specific inputs. This project implements an efficient defense pipeline combining:
 
-**Installation**
+- **SPECTRE Defense**: Robust covariance estimation for poisoned sample detection ([Hayase et al., 2021](https://arxiv.org/abs/2104.11315))
+- **Gradient-based Unlearning**: Fine-tuning to remove backdoor behavior while preserving clean model performance
+- **Sentiment Analysis Use Case**: Applied to Amazon Fine Foods Reviews with text-based backdoor triggers
 
+### Key Achievement
+SPECTRE achieves **~100% poison detection rate** across multiple training epochs, significantly outperforming traditional methods like PCA (68-90%) and K-Means (20-31%).
+
+## Results
+
+![Poison Removal Comparison](plots/poison_removed.png)
+
+The chart shows the percentage of poisoned samples detected by three defense methods across training epochs:
+- **SPECTRE (blue)**: Maintains near-perfect detection (99-100%) for epochs 1-4
+- **PCA (orange)**: Moderate detection (68-90%) with declining effectiveness
+- **K-Means (green)**: Poor detection (~20-31%) throughout training
+
+## Architecture
+
+The defense pipeline consists of four stages:
+
+```
+┌─────────────────┐      ┌──────────────────┐      ┌──────────────────┐      ┌─────────────┐
+│  1. Poisoning   │  →   │  2. Training on  │  →   │  3. Defense      │  →   │ 4. Unlearn  │
+│                 │      │  Poisoned Data   │      │  Filtering       │      │             │
+├─────────────────┤      ├──────────────────┤      ├──────────────────┤      ├─────────────┤
+│ Insert trigger  │      │ Train combined   │      │ Extract hidden   │      │ Retrain on  │
+│ "*BDT*" into    │      │ clean + poison   │      │ representations  │      │ clean data  │
+│ reviews         │      │ dataset          │      │                  │      │ only        │
+│                 │      │                  │      │ Apply SPECTRE,   │      │             │
+│ Flip labels     │      │ Save model       │      │ PCA, K-Means     │      │ Minimize    │
+│ (bad → good)    │      │ checkpoints      │      │                  │      │ backdoor    │
+│                 │      │                  │      │ Output masks     │      │ effect      │
+└─────────────────┘      └──────────────────┘      └──────────────────┘      └─────────────┘
+```
+
+## Project Structure
+
+```
+Efficient-Backdoor-Unlearning/
+├── dataloaders/              # Data loading and poisoning
+│   ├── dataloader.py         # Amazon Reviews dataset loader
+│   ├── poison_data.py        # Backdoor trigger injection
+│   └── preprocess_data.py    # Preprocessing and class balancing
+├── models/                   # Model architectures
+│   └── sentiment_transformer.py  # Custom transformer for sentiment classification
+├── translated_julia_files/   # Defense filter implementations (Python)
+│   ├── run_filters.py        # Main orchestration script
+│   ├── quantum_filters.py    # SPECTRE robust covariance method
+│   ├── dkk17.py             # DKK 2017 defense
+│   ├── kmeans_filters.py     # K-means clustering filter
+│   └── utils.py             # Utility functions (PCA, SVD, plotting)
+├── plots/                    # Result visualizations
+├── run_baseline.py           # Train clean baseline model
+├── run_poisoned_training.py  # Train on poisoned dataset
+├── rep_saver.py             # Extract hidden representations
+├── run_unlearning.py        # Unlearning algorithm
+├── clean_poison_split.py    # Split samples using defense masks
+├── parse_poison_removed.ipynb  # Results analysis notebook
+├── download_dataset.sh      # Dataset download script
+└── requirements.txt         # Python dependencies
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.10 or 3.11
+- CUDA-capable GPU (recommended)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/AryanSarswat/Efficient-Backdoor-Unlearning.git
+cd Efficient-Backdoor-Unlearning
+```
+
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
-
-module load julia
-julia --project=. -e "using Pkg; Pkg.instantiate()"
-julia --project=. -e 'using Pkg; Pkg.add("PyCall")'
 ```
 
-## Running an experiment
-
-<!-- Experiments are named using a specific convention: 
+3. Download the Amazon Fine Foods dataset:
 ```bash
-{model}-{trainer}-{source_label}{target_label}-{m}x{attack_type}{eps_times_n}
+bash download_dataset.sh
 ```
 
-* `model`: Can be `r18` for a ResNet-18 or `r32p` for ResNet-32.
-* `trainer`: Can be `sgd` or `ranger`. This also selects a set of hyperparameters (learning rate schedule, weight decay, etc.) that work well for that optimizer.
-  `ranger` is recommended for `r18` models and `sgd` is recommended for `r32p` models.
-* `source_label` and `target_label`: Integers from `0` to `9` corresponding to labels of CIFAR-10.
-* `m`: An integer, which is the number of ways to split the attack. We tried values of `1`, `2`, and `3`.
-* `attack_type`: Can be `p` for pixel attacks or `s` for periodic (i.e. sinusoidal) attacks.
-* `eps_times_n`: Integer number of poisoned samples.
-
-Example: `name=r32p-sgd-94-1xp500`
-
-The files related to experiment `$name` are stored in the directory `output/$name`. -->
-
-Experiments are named using a specific convention: 
+4. Preprocess the dataset:
 ```bash
-{model}-{source_label}-{target_label}-{eps_times_n}
+python dataloaders/preprocess_data.py
 ```
 
-* `model`: Name of your model.
-* `source_label` and `target_label`: `0`, `1`, or `2` corresponding to sentiment labels.
-* `eps_times_n`: Integer number of poisoned samples.
+### Running Experiments
 
-Example: `name=poisoned_model_final-0-2-500`
-
-The files related to experiment `$name` are stored in the directory `output/$name`.
-
-**Initial training**
-
-First we train a model on the poisoned dataset.
-
+#### 1. Train Baseline (Clean Model)
 ```bash
-python run_poisoned_training.py
+python run_baseline.py
 ```
+Trains a model on clean data only and saves to `saved_models/clean_model_final.pth`.
 
-NAME DOES NOT WORK
+#### 2. Train on Poisoned Data
+```bash
+python run_poisoned_training.py --epochs 5 --use_wandb
+```
+Trains a model on combined clean + poisoned data. Experiment results are logged to Weights & Biases if `--use_wandb` is specified.
 
-This should save a PyTorch serialized model to `output/$name/model.pth`. 
-
-**Compute hidden representations**
-
-Next we run the training data through the network and save the hidden representations to a file to be read later.
-
+#### 3. Extract Hidden Representations
 ```bash
 python rep_saver.py
 ```
+Saves representations from the penultimate layer to `output/{experiment_name}/label_*_reps.npy`.
 
-NAME DOES NOT WORK
-
-This should save NumPy serialized arrays to `output/$name/label_$label_reps.npy` for `$label` from `0` to `2`.
-Ususally, we are only interested in the file corresponding to the target label.
-
-**Run defences**
-
-We read the representations and execute the filters against them, producing three samples masks specifying which samples should be used for retraining.
-
+#### 4. Run Defense Filters
 ```bash
-module load julia
-julia --project=. run_filters.jl $name
+python translated_julia_files/run_filters.py {experiment_name}
 ```
+Applies three defense methods and outputs boolean masks:
+- `mask-pca-target.npy` - PCA-based detection
+- `mask-kmeans-target.npy` - K-means clustering detection
+- `mask-rcov-target.npy` - SPECTRE robust covariance detection
 
-This produces three files in `output/$name/`:
-
-* `mask-pca-target.npy` for the PCA defense.
-* `mask-kmeans-target.npy` for the Clustering defense.
-* `mask-rcov-target.npy` for the SPECTRE defense.
-
-**Retrain the networks on the cleaned datasets**
-
-NOT IMPLEMENTED YET
-
+#### 5. Split Clean/Poisoned Samples
 ```bash
-python train.py $name $mask_name
+python clean_poison_split.py {experiment_name} {mask_name}
 ```
+Separates samples using the specified mask.
 
-This reads the mask from `output/$name/$mask_name.npy` and trains the network from scratch on the resulting masked dataset.
+#### 6. Unlearn the Backdoor
+```bash
+python run_unlearning.py --epochs 5
+```
+Performs gradient-based unlearning to remove backdoor behavior while preserving clean accuracy.
 
-## Running against other attacks
+### Experiment Naming Convention
 
-For attacks not implemented here, you will need to find a way to obtain the hidden representations of the network in `npy` format.
-You can then put it in a directory under `output` with an arbitrary name as long as it ends in `{eps_times_n}`, which is needed by to determine how many samples to remove.
-You can then pass that name to `run_filters.jl`.
+Experiments follow the format: `{model}-{source_label}-{target_label}-{poison_count}`
+
+Example: `poisoned_model_final-0-2-500`
+- Model: `poisoned_model_final`
+- Source label: `0` (bad sentiment)
+- Target label: `2` (good sentiment)
+- Poison samples: `500`
+
+## Tech Stack
+
+- **Deep Learning**: PyTorch, torchvision
+- **NLP**: HuggingFace Transformers (DistilBERT tokenizer)
+- **Defense Methods**: SciPy (robust statistics), scikit-learn (PCA, K-Means)
+- **Experiment Tracking**: Weights & Biases (wandb)
+- **Data Processing**: pandas, NumPy
+- **Visualization**: Matplotlib, seaborn
+
+## Contributors
+
+- **Aryan Sarswat** - [@AryanSarswat](https://github.com/AryanSarswat)
+- **Adrian Cheung**
+- **varkeyjohn** 
+
+## Acknowledgments
+
+This project builds upon the SPECTRE defense method:
+- **Paper**: [Defending Against Backdoor Attacks Using Robust Covariance Estimation](https://arxiv.org/abs/2104.11315)
+- **Authors**: Jonathan Hayase, Weihao Kong, Raghav Somani, Sewoong Oh
+- **Original Implementation**: [SewoongLab](https://github.com/SewoongLab/spectre-defense)
